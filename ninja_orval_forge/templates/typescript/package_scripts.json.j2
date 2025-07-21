@@ -1,0 +1,26 @@
+{
+  "scripts": {
+    "prepare:{{ api_name }}": "curl {{ base_url }}/{{ openapi_endpoint }} -o {{ openapi_path }}",
+    "generate:{{ api_name }}": "openapi-typescript {{ openapi_path }} -o {{ ts_schemas_output_path }} && orval --config ./orval.config.ts",
+    "{{ api_name }}:generate": "npm run prepare:{{ api_name }} && npm run generate:{{ api_name }}",
+    "{{ api_name }}:watch": "npm run {{ api_name }}:generate && npm run {{ api_name }}:generate -- --watch",
+    "{{ api_name }}:clean": "rm -rf {{ output_path }} {{ ts_schemas_output_path }}"
+  },
+  "devDependencies": {
+    "orval": "^{{ orval_version }}",
+    "openapi-typescript": "^{{ openapi_typescript_version }}",
+    {% if prettier_enabled %}
+    "prettier": "^{{ prettier_version }}",
+    {% endif %}
+    {% if client_type == 'react-query' %}
+    "@tanstack/react-query": "^{{ react_query_version }}",
+    {% elif client_type == 'vue-query' %}
+    "@tanstack/vue-query": "^{{ vue_query_version }}",
+    {% elif client_type == 'svelte-query' %}
+    "@tanstack/svelte-query": "^{{ svelte_query_version }}",
+    {% elif client_type == 'axios' %}
+    "axios": "^{{ axios_version }}",
+    {% endif %}
+    "typescript": "^{{ typescript_version }}"
+  }
+}

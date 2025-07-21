@@ -1,0 +1,65 @@
+import { defineConfig } from 'orval'
+
+export default defineConfig({
+    {{ api_name }}: {
+        input: '{{ openapi_path }}',
+        output: {
+            target: '{{ output_path }}',
+            client: '{{ client_type }}',
+            mode: '{{ split_mode }}',
+            clean: {{ clean_output | lower }},
+            prettier: {{ prettier_enabled | lower }},
+            {% if ts_schemas_path %}
+            schemas: '{{ ts_schemas_path }}',
+            {% endif %}
+            {% if tsconfig_path %}
+            tsconfig: '{{ tsconfig_path }}',
+            {% endif %}
+            override: {
+                {% if use_mutator %}
+                mutator: {
+                    path: '{{ mutator_path }}',
+                    name: '{{ mutator_name }}',
+                },
+                {% endif %}
+                {% if headers %}
+                requestOptions: {
+                    headers: {
+                        {% for key, value in headers.items() %}
+                        '{{ key }}': '{{ value }}',
+                        {% endfor %}
+                    },
+                },
+                {% endif %}
+                {% if query_options %}
+                query: {
+                    {% if query_options.use_query %}
+                    useQuery: true,
+                    {% endif %}
+                    {% if query_options.use_infinite_query %}
+                    useInfiniteQuery: true,
+                    {% endif %}
+                    {% if query_options.use_mutation %}
+                    useMutation: true,
+                    {% endif %}
+                },
+                {% endif %}
+                {% if mock_enabled %}
+                mock: {
+                    type: '{{ mock_type }}',
+                    {% if mock_type == 'msw' %}
+                    baseUrl: '{{ base_url }}',
+                    {% endif %}
+                },
+                {% endif %}
+            },
+        },
+        {% if hooks %}
+        hooks: {
+            {% for hook_name, hook_command in hooks.items() %}
+            {{ hook_name }}: '{{ hook_command }}',
+            {% endfor %}
+        },
+        {% endif %}
+    },
+})

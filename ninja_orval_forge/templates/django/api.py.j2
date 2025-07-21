@@ -1,0 +1,31 @@
+from ninja import NinjaAPI
+from django.http import HttpRequest
+{% if auth_enabled %}
+from {{ app_name }}.apis.ninja.auth import {{ auth_class }}
+{% endif %}
+
+{% for feature in features %}
+from {{ app_name }}.apis.ninja.api_views.{{ feature.name }}.views import router as {{ feature.name }}_router
+{% endfor %}
+
+api = NinjaAPI(
+    title="{{ project_name }} API",
+    version="{{ api_version }}",
+    description="{{ api_description }}",
+    {% if auth_enabled %}
+    auth={{ auth_class }}(),
+    {% endif %}
+)
+
+{% for feature in features %}
+api.add_router("{{ feature.prefix }}", {{ feature.name }}_router)
+{% endfor %}
+
+# グローバルエラーハンドリング
+@api.exception_handler(Exception)
+def global_exception_handler(request: HttpRequest, exc: Exception):
+    return api.create_response(
+        request,
+        {"error": str(exc), "detail": "Internal server error"},
+        status=500,
+    )

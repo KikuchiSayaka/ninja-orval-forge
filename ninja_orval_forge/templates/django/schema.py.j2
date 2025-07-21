@@ -1,0 +1,91 @@
+"""
+{{ model_name }}API専用の入出力スキーマ定義
+このAPIエンドポイントでのみ使用される個別のスキーマクラスを提供
+"""
+from pydantic import BaseModel, Field, ConfigDict, computed_field
+from typing import List, Optional, Union, Dict, Any
+from datetime import datetime, date, time
+from decimal import Decimal
+from uuid import UUID
+{% if email_field_used %}
+from pydantic import EmailStr
+{% endif %}
+{% if url_field_used %}
+from pydantic import HttpUrl
+{% endif %}
+
+{% if base_schemas %}
+from {{ app_name }}.apis.ninja.base_schemas import {{ ', '.join(base_schemas) }}
+{% endif %}
+
+class {{ model_name }}Schema(BaseModel):
+    """{{ model_description }}のスキーマ"""
+    {% for field in fields %}
+    {{ field.name }}: {{ field.type_hint }}{% if field.optional %} = None{% endif %}{% if field.description %} = Field(..., description="{{ field.description }}"){% endif %}
+    {% endfor %}
+    
+    {% if computed_fields %}
+    # Computed fields
+    {% for cf in computed_fields %}
+    @computed_field
+    @property
+    def {{ cf.name }}(self) -> {{ cf.return_type }}:
+        """{{ cf.description }}"""
+        {{ cf.implementation | indent(8) }}
+    {% endfor %}
+    {% endif %}
+    
+    model_config = ConfigDict(
+        from_attributes=True,
+        {% if camel_case_enabled %}
+        alias_generator=lambda field_name: ''.join(
+            word.capitalize() if i else word for i, word in enumerate(field_name.split('_'))
+        ),
+        populate_by_name=True,
+        {% endif %}
+        str_strip_whitespace=True,
+    )
+
+{% if list_schema_needed %}
+class {{ model_name }}ListSchema(BaseModel):
+    """{{ model_name }}のリストレスポンス"""
+    count: int = Field(..., description="総件数")
+    next: Optional[str] = Field(None, description="次ページURL")
+    previous: Optional[str] = Field(None, description="前ページURL") 
+    results: List[{{ model_name }}Schema] = Field(..., description="結果リスト")
+{% endif %}
+
+{% if create_schema_needed %}
+class {{ model_name }}CreateSchema(BaseModel):
+    """{{ model_name }}作成用スキーマ"""
+    {% for field in create_fields %}
+    {{ field.name }}: {{ field.type_hint }}{% if field.optional %} = None{% endif %}{% if field.description %} = Field(..., description="{{ field.description }}"){% endif %}
+    {% endfor %}
+    
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        {% if camel_case_enabled %}
+        alias_generator=lambda field_name: ''.join(
+            word.capitalize() if i else word for i, word in enumerate(field_name.split('_'))
+        ),
+        populate_by_name=True,
+        {% endif %}
+    )
+{% endif %}
+
+{% if update_schema_needed %}
+class {{ model_name }}UpdateSchema(BaseModel):
+    """{{ model_name }}更新用スキーマ"""
+    {% for field in update_fields %}
+    {{ field.name }}: Optional[{{ field.type_hint }}] = Field(None, description="{{ field.description }}")
+    {% endfor %}
+    
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        {% if camel_case_enabled %}
+        alias_generator=lambda field_name: ''.join(
+            word.capitalize() if i else word for i, word in enumerate(field_name.split('_'))
+        ),
+        populate_by_name=True,
+        {% endif %}
+    )

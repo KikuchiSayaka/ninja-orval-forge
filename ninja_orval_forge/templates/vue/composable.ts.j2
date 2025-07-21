@@ -1,0 +1,337 @@
+/**
+ * {{ model_name }}用のComposable
+ * 
+ * Vue 3 Composition APIを使用してAPI操作を抽象化
+ */
+
+import { ref, computed, reactive } from 'vue'
+import type { Ref } from 'vue'
+import {
+  {% if list_enabled %}{{ list_function_name }},{% endif %}
+  {% if retrieve_enabled %}{{ retrieve_function_name }},{% endif %}
+  {% if create_enabled %}{{ create_function_name }},{% endif %}
+  {% if update_enabled %}{{ update_function_name }},{% endif %}
+  {% if delete_enabled %}{{ delete_function_name }},{% endif %}
+} from '{{ api_import_path }}'
+import type { 
+  {{ schema_type }},
+  {% if list_enabled %}{{ list_schema_type }},{% endif %}
+  {% if create_enabled %}{{ create_schema_type }},{% endif %}
+  {% if update_enabled %}{{ update_schema_type }},{% endif %}
+} from '{{ schema_import_path }}'
+
+export interface {{ model_name }}ListOptions {
+  limit?: number
+  offset?: number
+  {% for filter in filters %}
+  {{ filter.name }}?: {{ filter.type }}
+  {% endfor %}
+  {% for param in path_params %}
+  {{ param.name }}?: {{ param.type }}
+  {% endfor %}
+}
+
+export interface {{ model_name }}State {
+  items: {{ schema_type }}[]
+  total: number
+  loading: boolean
+  error: string | null
+}
+
+export interface {{ model_name }}Filters {
+  {% for filter in filters %}
+  {{ filter.name }}: {{ filter.type }}
+  {% endfor %}
+}
+
+/**
+ * {{ model_name }}一覧管理用Composable
+ */
+export function use{{ model_name }}List(initialOptions: {{ model_name }}ListOptions = {}) {
+  // State
+  const state = reactive<{{ model_name }}State>({
+    items: [],
+    total: 0,
+    loading: false,
+    error: null,
+  })
+
+  const options = reactive<{{ model_name }}ListOptions>({
+    limit: {{ default_limit }},
+    offset: 0,
+    ...initialOptions,
+  })
+
+  // Computed
+  const isEmpty = computed(() => !state.loading && state.items.length === 0)
+  const hasError = computed(() => !!state.error)
+  const totalPages = computed(() => Math.ceil(state.total / (options.limit || {{ default_limit }})))
+  const currentPage = computed(() => Math.floor((options.offset || 0) / (options.limit || {{ default_limit }})) + 1)
+
+  // Methods
+  {% if list_enabled %}
+  const fetchItems = async () => {
+    state.loading = true
+    state.error = null
+
+    try {
+      const response = await {{ list_function_name }}(options)
+      state.items = response.data.results
+      state.total = response.data.count
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : 'データの取得に失敗しました'
+      console.error('Failed to fetch {{ model_name }} list:', error)
+    } finally {
+      state.loading = false
+    }
+  }
+
+  const refresh = () => {
+    return fetchItems()
+  }
+
+  const setFilters = (filters: Partial<{{ model_name }}Filters>) => {
+    Object.assign(options, filters)
+    options.offset = 0 // フィルター変更時はページをリセット
+    return fetchItems()
+  }
+
+  const setPage = (page: number) => {
+    options.offset = (page - 1) * (options.limit || {{ default_limit }})
+    return fetchItems()
+  }
+
+  const setLimit = (limit: number) => {
+    options.limit = limit
+    options.offset = 0 // ページサイズ変更時はページをリセット
+    return fetchItems()
+  }
+  {% endif %}
+
+  return {
+    // State
+    state: readonly(state),
+    options: readonly(options),
+    
+    // Computed
+    isEmpty,
+    hasError,
+    totalPages,
+    currentPage,
+    
+    // Methods
+    {% if list_enabled %}
+    fetchItems,
+    refresh,
+    setFilters,
+    setPage,
+    setLimit,
+    {% endif %}
+  }
+}
+
+/**
+ * 単一{{ model_name }}管理用Composable
+ */
+export function use{{ model_name }}(id?: Ref<number | null> | number | null) {
+  const item = ref<{{ schema_type }} | null>(null)
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+
+  const itemId = computed(() => {
+    if (typeof id === 'number') return id
+    if (id && 'value' in id) return id.value
+    return null
+  })
+
+  // Computed
+  const isLoaded = computed(() => !!item.value)
+  const hasError = computed(() => !!error.value)
+
+  // Methods
+  {% if retrieve_enabled %}
+  const fetchItem = async (forceId?: number) => {
+    const targetId = forceId || itemId.value
+    if (!targetId) {
+      error.value = 'IDが指定されていません'
+      return
+    }
+
+    loading.value = true
+    error.value = null
+
+    try {
+      const response = await {{ retrieve_function_name }}({ id: targetId })
+      item.value = response.data
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'データの取得に失敗しました'
+      console.error('Failed to fetch {{ model_name }}:', err)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const refresh = () => {
+    return fetchItem()
+  }
+  {% endif %}
+
+  {% if update_enabled %}
+  const updateItem = async (data: {{ update_schema_type }}) => {
+    if (!itemId.value) {
+      throw new Error('IDが指定されていません')
+    }
+
+    loading.value = true
+    error.value = null
+
+    try {
+      const response = await {{ update_function_name }}({
+        id: itemId.value,
+        data,
+      })
+      item.value = response.data
+      return response.data
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '更新に失敗しました'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+  {% endif %}
+
+  {% if delete_enabled %}
+  const deleteItem = async () => {
+    if (!itemId.value) {
+      throw new Error('IDが指定されていません')
+    }
+
+    loading.value = true
+    error.value = null
+
+    try {
+      await {{ delete_function_name }}({ id: itemId.value })
+      item.value = null
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '削除に失敗しました'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+  {% endif %}
+
+  return {
+    // State
+    item: readonly(item),
+    loading: readonly(loading),
+    error: readonly(error),
+    
+    // Computed
+    isLoaded,
+    hasError,
+    
+    // Methods
+    {% if retrieve_enabled %}
+    fetchItem,
+    refresh,
+    {% endif %}
+    {% if update_enabled %}
+    updateItem,
+    {% endif %}
+    {% if delete_enabled %}
+    deleteItem,
+    {% endif %}
+  }
+}
+
+/**
+ * {{ model_name }}作成用Composable
+ */
+{% if create_enabled %}
+export function use{{ model_name }}Creation() {
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+
+  const createItem = async (data: {{ create_schema_type }}) => {
+    loading.value = true
+    error.value = null
+
+    try {
+      const response = await {{ create_function_name }}({ data })
+      return response.data
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '作成に失敗しました'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return {
+    // State
+    loading: readonly(loading),
+    error: readonly(error),
+    
+    // Methods
+    createItem,
+  }
+}
+{% endif %}
+
+/**
+ * {{ model_name }}操作のユーティリティ関数
+ */
+export const {{ camelCase(model_name) }}Utils = {
+  /**
+   * {{ model_name }}の表示名を取得
+   */
+  getDisplayName(item: {{ schema_type }}): string {
+    {% if display_field %}
+    return item.{{ display_field }}
+    {% else %}
+    return `{{ model_name }} #${item.id}`
+    {% endif %}
+  },
+
+  /**
+   * {{ model_name }}のURLを生成
+   */
+  getDetailUrl(item: {{ schema_type }}): string {
+    return `/{{ kebab_case(model_name) }}/${item.id}`
+  },
+
+  /**
+   * {{ model_name }}のステータスに応じたCSSクラスを取得
+   */
+  {% if status_field %}
+  getStatusClass(item: {{ schema_type }}): string {
+    switch (item.{{ status_field }}) {
+      {% for status in status_options %}
+      case '{{ status.value }}':
+        return '{{ status.class }}'
+      {% endfor %}
+      default:
+        return 'status-default'
+    }
+  },
+  {% endif %}
+
+  /**
+   * フィルターオプションの取得
+   */
+  getFilterOptions() {
+    return {
+      {% for filter in filters %}
+      {% if filter.options %}
+      {{ filter.name }}: [
+        {% for option in filter.options %}
+        { value: '{{ option.value }}', label: '{{ option.label }}' },
+        {% endfor %}
+      ],
+      {% endif %}
+      {% endfor %}
+    }
+  },
+}

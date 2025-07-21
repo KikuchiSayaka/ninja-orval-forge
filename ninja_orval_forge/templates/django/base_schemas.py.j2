@@ -1,0 +1,32 @@
+"""
+API共通の汎用スキーマ定義
+プロジェクト全体で再利用される基盤的なスキーマクラスを提供
+"""
+from pydantic import BaseModel, Field
+from typing import Optional
+
+
+class PaginationQuery(BaseModel):
+    """ページネーション用クエリパラメータ - 全APIで共通利用"""
+    limit: int = Field({{ default_page_size }}, description="取得件数", ge=1, le={{ max_page_size }})
+    offset: int = Field(0, description="オフセット", ge=0)
+
+
+class MessageResponseSchema(BaseModel):
+    """汎用メッセージレスポンス - 成功時などの共通レスポンス"""
+    message: str = Field(..., description="メッセージ")
+    detail: Optional[str] = Field(None, description="詳細情報")
+
+
+class ErrorResponseSchema(BaseModel):
+    """汎用エラーレスポンス - 全APIのエラー時共通レスポンス"""
+    error: str = Field(..., description="エラーメッセージ")
+    detail: Optional[str] = Field(None, description="エラー詳細")
+    code: Optional[str] = Field(None, description="エラーコード")
+
+
+class HealthCheckSchema(BaseModel):
+    """ヘルスチェック用スキーマ - システム監視用"""
+    status: str = Field(..., description="ステータス")
+    timestamp: str = Field(..., description="タイムスタンプ")
+    version: Optional[str] = Field(None, description="APIバージョン")

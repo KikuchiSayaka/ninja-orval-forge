@@ -1,0 +1,239 @@
+/**
+ * {{ project_name }} API用のカスタムFetchラッパー
+ * 
+ * レスポンス形式を統一して型安全にするための処理
+ * すべてのAPIレスポンスが異なる形式で返される場合は不要。
+ * ただしページネーションコンポーネントとの連携や、型の自動生成、
+ * 共通処理の集中管理の観点からは可能な限りレスポンス形式を統一した方が良い。
+ */
+
+export interface ApiResponse<T> {
+    data: T
+    status: number
+    headers: Headers
+}
+
+export interface RequestConfig extends RequestInit {
+    params?: Record<string, any>
+    responseType?: 'json' | 'blob' | 'text' | 'arrayBuffer'
+    timeout?: number
+}
+
+export class ApiError extends Error {
+    constructor(
+        public status: number,
+        public data: any,
+        message?: string
+    ) {
+        super(message || data?.error || data?.message || 'APIエラーが発生しました')
+        this.name = 'ApiError'
+    }
+}
+
+/**
+ * カスタムFetch関数
+ * Orvalで生成されるAPIクライアントが使用する
+ */
+export const {{ mutator_name }} = async <T>(
+    url: string,
+    config: RequestConfig = {}
+): Promise<ApiResponse<T>> => {
+    const { 
+        params, 
+        responseType = 'json', 
+        timeout = {{ default_timeout }},
+        ...options 
+    } = config
+
+    // URLパラメータの処理
+    if (params) {
+        const searchParams = new URLSearchParams()
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== null && value !== undefined) {
+                if (Array.isArray(value)) {
+                    value.forEach(v => searchParams.append(key, String(v)))
+                } else {
+                    searchParams.append(key, String(value))
+                }
+            }
+        })
+        const queryString = searchParams.toString()
+        if (queryString) {
+            url += (url.includes('?') ? '&' : '?') + queryString
+        }
+    }
+
+    // デフォルトヘッダー設定
+    const headers: HeadersInit = {
+        {% if content_type %}
+        'Content-Type': '{{ content_type }}',
+        {% endif %}
+        {% if accept_header %}
+        'Accept': '{{ accept_header }}',
+        {% endif %}
+        ...options.headers,
+    }
+
+    {% if csrf_enabled %}
+    // CSRFトークンの取得（Django用）
+    const csrfToken = getCsrfToken()
+    if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken
+    }
+    {% endif %}
+
+    {% if auth_enabled %}
+    // 認証トークンの追加
+    const authToken = getAuthToken()
+    if (authToken) {
+        headers['Authorization'] = `{{ auth_scheme }} ${authToken}`
+    }
+    {% endif %}
+
+    // タイムアウト処理
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            headers,
+            credentials: '{{ credentials_mode }}',
+            signal: options.signal || controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
+        // エラーレスポンスの処理
+        if (!response.ok) {
+            let errorData: any = {}
+            try {
+                const contentType = response.headers.get('content-type')
+                if (contentType && contentType.includes('application/json')) {
+                    errorData = await response.json()
+                } else {
+                    errorData = { message: await response.text() }
+                }
+            } catch (e) {
+                errorData = { message: 'Parse error' }
+            }
+            
+            throw new ApiError(response.status, errorData)
+        }
+
+        // レスポンスの解析
+        let data: T
+        try {
+            switch (responseType) {
+                case 'blob':
+                    data = (await response.blob()) as T
+                    break
+                case 'text':
+                    data = (await response.text()) as T
+                    break
+                case 'arrayBuffer':
+                    data = (await response.arrayBuffer()) as T
+                    break
+                default:
+                    const contentType = response.headers.get('content-type')
+                    if (contentType && contentType.includes('application/json')) {
+                        data = await response.json()
+                    } else {
+                        data = (await response.text()) as T
+                    }
+            }
+        } catch (e) {
+            throw new ApiError(response.status, { message: 'レスポンスの解析に失敗しました' })
+        }
+
+        return {
+            data,
+            status: response.status,
+            headers: response.headers,
+        }
+    } catch (error) {
+        clearTimeout(timeoutId)
+        
+        if (error instanceof ApiError) {
+            throw error
+        }
+        
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new ApiError(0, { message: 'リクエストがタイムアウトしました' })
+        }
+        
+        throw new ApiError(0, { message: 'ネットワークエラーが発生しました' })
+    }
+}
+
+{% if csrf_enabled %}
+/**
+ * CSRFトークンを取得
+ */
+function getCsrfToken(): string | null {
+    // Cookieから取得
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('csrftoken='))
+        ?.split('=')[1]
+    
+    if (cookieValue) {
+        return cookieValue
+    }
+    
+    // HTMLメタタグから取得
+    const metaTag = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement
+    if (metaTag) {
+        return metaTag.content
+    }
+    
+    // Hiddenフィールドから取得
+    const hiddenField = document.querySelector('[name="csrfmiddlewaretoken"]') as HTMLInputElement
+    if (hiddenField) {
+        return hiddenField.value
+    }
+    
+    return null
+}
+{% endif %}
+
+{% if auth_enabled %}
+/**
+ * 認証トークンを取得
+ */
+function getAuthToken(): string | null {
+    // localStorage/sessionStorageから取得
+    {% if auth_storage == 'localStorage' %}
+    return localStorage.getItem('{{ auth_token_key }}')
+    {% elif auth_storage == 'sessionStorage' %}
+    return sessionStorage.getItem('{{ auth_token_key }}')
+    {% else %}
+    // Cookieから取得
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('{{ auth_token_key }}='))
+        ?.split('=')[1]
+    return cookieValue || null
+    {% endif %}
+}
+{% endif %}
+
+/**
+ * APIエラーかどうかを判定するタイプガード
+ */
+export function isApiError(error: unknown): error is ApiError {
+    return error instanceof ApiError
+}
+
+/**
+ * エラーメッセージを取得するヘルパー関数
+ */
+export function getErrorMessage(error: unknown): string {
+    if (isApiError(error)) {
+        return error.message
+    }
+    if (error instanceof Error) {
+        return error.message
+    }
+    return 'エラーが発生しました'
+}

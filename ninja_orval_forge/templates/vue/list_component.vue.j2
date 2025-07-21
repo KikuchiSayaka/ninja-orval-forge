@@ -1,0 +1,771 @@
+<template>
+  <div class="{{ kebab_case(component_name) }}">
+    <!-- ヘッダー -->
+    <div class="header">
+      <h2 class="title">{{ page_title }}</h2>
+      {% if create_enabled %}
+      <button 
+        class="btn btn-primary"
+        @click="showCreateModal = true"
+      >
+        <Icon name="plus" />
+        新規作成
+      </button>
+      {% endif %}
+    </div>
+    
+    <!-- フィルター -->
+    {% if filters %}
+    <div class="filters">
+      <div class="filter-row">
+        {% for filter in filters %}
+        <div class="filter-item">
+          <label class="filter-label">{{ filter.label }}:</label>
+          {% if filter.type == 'select' %}
+          <select 
+            v-model="filters.{{ filter.name }}"
+            class="filter-input"
+            @change="handleFilterChange"
+          >
+            <option value="">すべて</option>
+            {% for option in filter.options %}
+            <option value="{{ option.value }}">{{ option.label }}</option>
+            {% endfor %}
+          </select>
+          {% elif filter.type == 'date' %}
+          <input
+            v-model="filters.{{ filter.name }}"
+            type="date"
+            class="filter-input"
+            @change="handleFilterChange"
+          />
+          {% else %}
+          <input
+            v-model="filters.{{ filter.name }}"
+            type="{{ filter.type }}"
+            class="filter-input"
+            placeholder="{{ filter.placeholder }}"
+            @input="debounceFilter"
+          />
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      
+      {% if filters %}
+      <div class="filter-actions">
+        <button 
+          class="btn btn-secondary btn-sm"
+          @click="clearFilters"
+        >
+          フィルターをクリア
+        </button>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- データテーブル -->
+    <div class="table-container">
+      <table class="data-table" v-if="!loading && items.length > 0">
+        <thead>
+          <tr>
+            {% for column in columns %}
+            <th 
+              class="table-header"
+              {% if column.sortable %}
+              :class="{ 'sortable': true, 'sorted': sortField === '{{ column.field }}' }"
+              @click="handleSort('{{ column.field }}')"
+              {% endif %}
+            >
+              {{ column.label }}
+              {% if column.sortable %}
+              <Icon 
+                v-if="sortField === '{{ column.field }}'"
+                :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'"
+                class="sort-icon"
+              />
+              {% endif %}
+            </th>
+            {% endfor %}
+            {% if actions_enabled %}
+            <th class="table-header actions-header">アクション</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          <tr 
+            v-for="item in items" 
+            :key="item.id"
+            class="table-row"
+            {% if row_clickable %}
+            @click="handleRowClick(item)"
+            {% endif %}
+          >
+            {% for column in columns %}
+            <td class="table-cell">
+              {% if column.type == 'link' %}
+              <router-link 
+                :to="{ name: '{{ column.route }}', params: { id: item.id } }"
+                class="link"
+              >
+                {{ '{{ item.' + column.field + ' }}' }}
+              </router-link>
+              {% elif column.type == 'badge' %}
+              <span 
+                class="badge"
+                :class="`badge-${item.{{ column.field }}}`"
+              >
+                {{ '{{ item.' + column.field + ' }}' }}
+              </span>
+              {% elif column.type == 'date' %}
+              {{ '{{ formatDate(item.' + column.field + ') }}' }}
+              {% elif column.type == 'currency' %}
+              {{ '{{ formatCurrency(item.' + column.field + ') }}' }}
+              {% else %}
+              {{ '{{ item.' + column.field + ' }}' }}
+              {% endif %}
+            </td>
+            {% endfor %}
+            
+            {% if actions_enabled %}
+            <td class="table-cell actions-cell">
+              <div class="action-buttons">
+                {% if view_enabled %}
+                <button 
+                  class="btn btn-outline btn-sm"
+                  @click="handleView(item)"
+                  title="詳細表示"
+                >
+                  <Icon name="eye" />
+                </button>
+                {% endif %}
+                {% if edit_enabled %}
+                <button 
+                  class="btn btn-outline btn-sm"
+                  @click="handleEdit(item)"
+                  title="編集"
+                >
+                  <Icon name="edit" />
+                </button>
+                {% endif %}
+                {% if delete_enabled %}
+                <button 
+                  class="btn btn-outline btn-sm btn-danger"
+                  @click="handleDelete(item)"
+                  title="削除"
+                >
+                  <Icon name="trash" />
+                </button>
+                {% endif %}
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 空の状態 -->
+      <div v-if="!loading && items.length === 0" class="empty-state">
+        <div class="empty-icon">
+          <Icon name="inbox" size="48" />
+        </div>
+        <h3 class="empty-title">データがありません</h3>
+        <p class="empty-description">
+          {% if create_enabled %}
+          新しい{{ model_name }}を作成してください。
+          {% else %}
+          条件に一致するデータが見つかりませんでした。
+          {% endif %}
+        </p>
+        {% if create_enabled %}
+        <button 
+          class="btn btn-primary"
+          @click="showCreateModal = true"
+        >
+          <Icon name="plus" />
+          新規作成
+        </button>
+        {% endif %}
+      </div>
+
+      <!-- ローディング -->
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">読み込み中...</p>
+      </div>
+
+      <!-- エラー表示 -->
+      <div v-if="error && !loading" class="error-state">
+        <div class="error-icon">
+          <Icon name="alert-circle" size="48" color="red" />
+        </div>
+        <h3 class="error-title">エラーが発生しました</h3>
+        <p class="error-message">{{ '{{ error }}' }}</p>
+        <button 
+          class="btn btn-secondary"
+          @click="retry"
+        >
+          再試行
+        </button>
+      </div>
+    </div>
+
+    <!-- ページネーション -->
+    <div class="pagination-container" v-if="totalCount > limit && !loading">
+      <div class="pagination-info">
+        <span class="pagination-text">
+          {{ '{{ totalCount }}' }}件中 {{ '{{ ((currentPage - 1) * limit) + 1 }}' }}-{{ '{{ Math.min(currentPage * limit, totalCount) }}' }}件を表示
+        </span>
+      </div>
+      
+      <div class="pagination-controls">
+        <button
+          class="btn btn-outline btn-sm"
+          @click="previousPage"
+          :disabled="currentPage === 1"
+        >
+          <Icon name="chevron-left" />
+          前へ
+        </button>
+        
+        <div class="page-numbers">
+          <button
+            v-for="page in visiblePages"
+            :key="page"
+            class="btn btn-outline btn-sm"
+            :class="{ 'active': page === currentPage }"
+            @click="goToPage(page)"
+          >
+            {{ '{{ page }}' }}
+          </button>
+        </div>
+        
+        <button
+          class="btn btn-outline btn-sm"
+          @click="nextPage"
+          :disabled="currentPage === totalPages"
+        >
+          次へ
+          <Icon name="chevron-right" />
+        </button>
+      </div>
+    </div>
+
+    <!-- モーダル -->
+    {% if create_enabled %}
+    <CreateModal
+      v-if="showCreateModal"
+      @close="showCreateModal = false"
+      @created="handleCreated"
+    />
+    {% endif %}
+    
+    {% if edit_enabled %}
+    <EditModal
+      v-if="showEditModal && editingItem"
+      :item="editingItem"
+      @close="showEditModal = false"
+      @updated="handleUpdated"
+    />
+    {% endif %}
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { debounce } from 'lodash-es'
+import { {{ api_function_name }} } from '{{ api_import_path }}'
+import type { {{ schema_type }} } from '{{ schema_import_path }}'
+{% if create_enabled %}
+import CreateModal from './CreateModal.vue'
+{% endif %}
+{% if edit_enabled %}
+import EditModal from './EditModal.vue'
+{% endif %}
+import Icon from '@/components/common/Icon.vue'
+
+// Props
+interface Props {
+  {% for prop in props %}
+  {{ prop.name }}?: {{ prop.type }}
+  {% endfor %}
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  {% for prop in props %}
+  {% if prop.default %}
+  {{ prop.name }}: {{ prop.default }},
+  {% endif %}
+  {% endfor %}
+})
+
+// Emits
+const emit = defineEmits<{
+  {% for event in events %}
+  {{ event.name }}: [{{ event.payload }}]
+  {% endfor %}
+}>()
+
+// State
+const items = ref<{{ schema_type }}[]>([])
+const loading = ref(false)
+const error = ref<string | null>(null)
+const totalCount = ref(0)
+const currentPage = ref(1)
+const limit = ref({{ default_limit }})
+const sortField = ref<string>('{{ default_sort_field }}')
+const sortOrder = ref<'asc' | 'desc'>('{{ default_sort_order }}')
+
+// モーダル状態
+{% if create_enabled %}
+const showCreateModal = ref(false)
+{% endif %}
+{% if edit_enabled %}
+const showEditModal = ref(false)
+const editingItem = ref<{{ schema_type }} | null>(null)
+{% endif %}
+
+// フィルター
+const filters = ref({
+  {% for filter in filters %}
+  {{ filter.name }}: {{ filter.default_value }},
+  {% endfor %}
+})
+
+// Computed
+const totalPages = computed(() => Math.ceil(totalCount.value / limit.value))
+const offset = computed(() => (currentPage.value - 1) * limit.value)
+
+const visiblePages = computed(() => {
+  const pages = []
+  const maxVisible = 5
+  let start = Math.max(1, currentPage.value - Math.floor(maxVisible / 2))
+  let end = Math.min(totalPages.value, start + maxVisible - 1)
+  
+  if (end - start + 1 < maxVisible) {
+    start = Math.max(1, end - maxVisible + 1)
+  }
+  
+  for (let i = start; i <= end; i++) {
+    pages.push(i)
+  }
+  
+  return pages
+})
+
+// Methods
+const fetchData = async () => {
+  loading.value = true
+  error.value = null
+  
+  try {
+    const params = {
+      limit: limit.value,
+      offset: offset.value,
+      {% if sort_enabled %}
+      ordering: sortOrder.value === 'desc' ? `-${sortField.value}` : sortField.value,
+      {% endif %}
+      ...filters.value,
+      ...props, // propsをパラメータとして追加
+    }
+    
+    const response = await {{ api_function_name }}(params)
+    
+    items.value = response.data.results
+    totalCount.value = response.data.count
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'エラーが発生しました'
+    console.error('Error fetching data:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+const retry = () => {
+  fetchData()
+}
+
+const handleFilterChange = () => {
+  currentPage.value = 1
+  fetchData()
+}
+
+const debounceFilter = debounce(() => {
+  handleFilterChange()
+}, 300)
+
+const clearFilters = () => {
+  filters.value = {
+    {% for filter in filters %}
+    {{ filter.name }}: {{ filter.default_value }},
+    {% endfor %}
+  }
+  handleFilterChange()
+}
+
+{% if sort_enabled %}
+const handleSort = (field: string) => {
+  if (sortField.value === field) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortField.value = field
+    sortOrder.value = 'asc'
+  }
+  fetchData()
+}
+{% endif %}
+
+const previousPage = () => {
+  if (currentPage.value > 1) {
+    currentPage.value--
+    fetchData()
+  }
+}
+
+const nextPage = () => {
+  if (currentPage.value < totalPages.value) {
+    currentPage.value++
+    fetchData()
+  }
+}
+
+const goToPage = (page: number) => {
+  currentPage.value = page
+  fetchData()
+}
+
+{% if row_clickable %}
+const handleRowClick = (item: {{ schema_type }}) => {
+  emit('rowClick', item)
+}
+{% endif %}
+
+{% if view_enabled %}
+const handleView = (item: {{ schema_type }}) => {
+  emit('view', item)
+}
+{% endif %}
+
+{% if edit_enabled %}
+const handleEdit = (item: {{ schema_type }}) => {
+  editingItem.value = item
+  showEditModal.value = true
+}
+
+const handleUpdated = (updatedItem: {{ schema_type }}) => {
+  const index = items.value.findIndex(item => item.id === updatedItem.id)
+  if (index !== -1) {
+    items.value[index] = updatedItem
+  }
+  showEditModal.value = false
+  editingItem.value = null
+}
+{% endif %}
+
+{% if create_enabled %}
+const handleCreated = (newItem: {{ schema_type }}) => {
+  items.value.unshift(newItem)
+  totalCount.value++
+  showCreateModal.value = false
+}
+{% endif %}
+
+{% if delete_enabled %}
+const handleDelete = async (item: {{ schema_type }}) => {
+  if (confirm(`${item.{{ display_field }}}を削除しますか？`)) {
+    try {
+      // Delete API call would go here
+      // await delete{{ model_name }}(item.id)
+      
+      items.value = items.value.filter(i => i.id !== item.id)
+      totalCount.value--
+      
+      // 現在のページが空になった場合は前のページに移動
+      if (items.value.length === 0 && currentPage.value > 1) {
+        currentPage.value--
+        fetchData()
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : '削除に失敗しました'
+    }
+  }
+}
+{% endif %}
+
+// Utility functions
+const formatDate = (dateString: string) => {
+  return new Date(dateString).toLocaleDateString('ja-JP')
+}
+
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('ja-JP', {
+    style: 'currency',
+    currency: 'JPY'
+  }).format(amount)
+}
+
+// Lifecycle
+onMounted(() => {
+  fetchData()
+})
+
+// Watch props changes
+{% for prop in props %}
+{% if prop.watch %}
+watch(() => props.{{ prop.name }}, () => {
+  currentPage.value = 1
+  fetchData()
+})
+{% endif %}
+{% endfor %}
+</script>
+
+<style scoped>
+.{{ kebab_case(component_name) }} {
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.filters {
+  background: #f8f9fa;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.filter-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+
+.filter-label {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #374151;
+}
+
+.filter-input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.table-container {
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-header {
+  background: #f8f9fa;
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.table-header.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.table-header.sortable:hover {
+  background: #e9ecef;
+}
+
+.sort-icon {
+  margin-left: 4px;
+}
+
+.table-row:hover {
+  background: #f8f9fa;
+}
+
+.table-cell {
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.actions-cell {
+  text-align: right;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.empty-state,
+.loading-state,
+.error-state {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.empty-icon,
+.error-icon {
+  margin-bottom: 16px;
+}
+
+.empty-title,
+.error-title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.empty-description,
+.error-message {
+  margin: 0 0 16px 0;
+  color: #6b7280;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e5e7eb;
+  border-top: 4px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  padding: 16px 0;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-numbers {
+  display: flex;
+  gap: 4px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn:hover {
+  background: #f8f9fa;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+.btn-secondary {
+  background: #6b7280;
+  border-color: #6b7280;
+  color: white;
+}
+
+.btn-outline {
+  background: transparent;
+}
+
+.btn-danger {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+  color: white;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.link {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+</style>
